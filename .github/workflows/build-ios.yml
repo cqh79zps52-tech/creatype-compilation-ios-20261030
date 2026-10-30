@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.19.0
       - name: Vérifier les accès et la révision privée
         env:
           SOURCE: ${{ inputs.source }}
@@ -84,7 +84,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE"
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.19.0
       - name: Restaurer la signature Creatype
         env:
           IOS_BUILD_CREDENTIALS: ${{ secrets.IOS_BUILD_CREDENTIALS }}
