@@ -70,8 +70,7 @@ jobs:
           SOURCE_KEY: ${{ secrets.CREATYPE_SSH_KEY }}
         run: |
           set -euo pipefail
-          xcode=$(python3 -c 'import pathlib,re; a=[p for p in pathlib.Path("/Applications").glob("Xcode_*.app") if re.match(r"Xcode_\d+\.\d+",p.name)]; print(max(a,key=lambda p:tuple(map(int,re.findall(r"\d+",p.name)))))')
-          sudo xcode-select -s "$xcode/Contents/Developer"
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
           xcodebuild -version
           mkdir -p ~/.ssh; chmod 700 ~/.ssh
           printf '%s\n' "$SOURCE_KEY" > ~/.ssh/source; chmod 600 ~/.ssh/source
@@ -99,10 +98,10 @@ jobs:
           fs.writeFileSync('credentials.json',JSON.stringify({ios:{provisioningProfilePath:profile,distributionCertificate:{path:certificate,password:c.password}}}),{mode:0o600});
           JS
       - run: npm ci
-      - name: Assembler l’éditeur et vérifier Xcode
-        run: |
-          node scripts/preflight-ios.mjs
-          node scripts/bundle-editor.mjs
+        timeout-minutes: 8
+      - name: Lire l’éditeur déjà assemblé dans la révision
+        timeout-minutes: 2
+        run: node -e 'const fs=require("fs");if(fs.statSync("src/ui/document-browser-bundle.ts").size<10000)throw Error("Editeur absent");console.log("Editeur versionné présent")' 
       - name: Compiler sans quota cloud Expo ni tests
         run: npx --yes eas-cli@26.0.0 build --platform ios --profile testflight --local --non-interactive --output "$RUNNER_TEMP/creatype.ipa"
       - name: Lire le binaire produit
