@@ -1,0 +1,121 @@
+name: Compiler Creatype iOS sur machine publique gratuite
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Révision privée exacte à compiler
+        required: true
+      compiler:
+        description: Compiler après le prévol
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: creatype-ios
+  cancel-in-progress: false
+jobs:
+  prevol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Vérifier les accès et la révision privée
+        env:
+          SOURCE: ${{ inputs.source }}
+          SOURCE_KEY: ${{ secrets.CREATYPE_SSH_KEY }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          SIGNING: ${{ secrets.IOS_BUILD_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPO_TOKEN"; test -n "$SIGNING"
+          [[ "$SOURCE" =~ ^[a-f0-9]{40}$ ]]
+          mkdir -p ~/.ssh; chmod 700 ~/.ssh
+          printf '%s\n' "$SOURCE_KEY" > ~/.ssh/source; chmod 600 ~/.ssh/source
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/source -o IdentitiesOnly=yes"
+          git init source
+          git -C source remote add origin git@github.com:cqh79zps52-tech/creatype-app.git
+          git -C source fetch --depth 1 origin "$SOURCE"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE"
+          cd source
+          node -e 'const c=require("./eas.json");if(c.build.testflight.channel!=="testflight"||c.build.testflight.credentialsSource!=="local")throw Error("Profil inattendu")'
+          npx --yes eas-cli@26.0.0 whoami
+      - name: Confirmer le dépôt privé du résultat
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="build-$GITHUB_RUN_ID"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --title "Creatype iOS $GITHUB_RUN_ID" --notes 'Compilation uniquement. Aucun code source dans ce dépôt.'
+          printf '%s\n' '${{ inputs.source }}' > "$RUNNER_TEMP/source.txt"
+          gh release upload "$tag" "$RUNNER_TEMP/source.txt" --repo "$GITHUB_REPOSITORY"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[]|select(.name=="source.txt")]|length')" = 1
+  compiler:
+    if: ${{ inputs.compiler }}
+    needs: prevol
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      CI: '1'
+      EAS_BUILD_PROFILE: testflight
+    steps:
+      - name: Sélectionner Xcode et lire le code privé
+        env:
+          SOURCE: ${{ inputs.source }}
+          SOURCE_KEY: ${{ secrets.CREATYPE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          xcode=$(python3 -c 'import pathlib,re; a=[p for p in pathlib.Path("/Applications").glob("Xcode_*.app") if re.match(r"Xcode_\d+\.\d+",p.name)]; print(max(a,key=lambda p:tuple(map(int,re.findall(r"\d+",p.name)))))')
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          mkdir -p ~/.ssh; chmod 700 ~/.ssh
+          printf '%s\n' "$SOURCE_KEY" > ~/.ssh/source; chmod 600 ~/.ssh/source
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/source -o IdentitiesOnly=yes"
+          git init .
+          git remote add origin git@github.com:cqh79zps52-tech/creatype-app.git
+          git fetch --depth 1 origin "$SOURCE"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Restaurer la signature Creatype
+        env:
+          IOS_BUILD_CREDENTIALS: ${{ secrets.IOS_BUILD_CREDENTIALS }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';import path from 'node:path';
+          const c=JSON.parse(process.env.IOS_BUILD_CREDENTIALS),b=process.env.RUNNER_TEMP;
+          console.log('::add-mask::'+c.password);
+          const profile=path.join(b,'creatype.mobileprovision'),certificate=path.join(b,'creatype.p12');
+          fs.writeFileSync(profile,Buffer.from(c.profile,'base64'),{mode:0o600});
+          fs.writeFileSync(certificate,Buffer.from(c.certificate,'base64'),{mode:0o600});
+          fs.writeFileSync('credentials.json',JSON.stringify({ios:{provisioningProfilePath:profile,distributionCertificate:{path:certificate,password:c.password}}}),{mode:0o600});
+          JS
+      - run: npm ci
+      - name: Assembler l’éditeur et vérifier Xcode
+        run: |
+          node scripts/preflight-ios.mjs
+          node scripts/bundle-editor.mjs
+      - name: Compiler sans quota cloud Expo ni tests
+        run: npx --yes eas-cli@26.0.0 build --platform ios --profile testflight --local --non-interactive --output "$RUNNER_TEMP/creatype.ipa"
+      - name: Lire le binaire produit
+        env:
+          GITHUB_SHA: ${{ inputs.source }}
+        run: node scripts/native-build-receipt.mjs "$RUNNER_TEMP/creatype.ipa" "$RUNNER_TEMP/native-build-receipt.json"
+      - name: Déposer le binaire dans la release brouillon
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "build-$GITHUB_RUN_ID" "$RUNNER_TEMP/creatype.ipa" "$RUNNER_TEMP/native-build-receipt.json" --repo "$GITHUB_REPOSITORY"
+          test "$(gh release view "build-$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[]|select(.name=="creatype.ipa")]|length')" = 1
+      - name: Effacer les éléments temporaires de signature
+        if: always()
+        run: rm -f credentials.json "$RUNNER_TEMP/creatype.p12" "$RUNNER_TEMP/creatype.mobileprovision" ~/.ssh/source
