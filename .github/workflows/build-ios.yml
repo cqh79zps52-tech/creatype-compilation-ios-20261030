@@ -37,11 +37,11 @@ jobs:
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/source -o IdentitiesOnly=yes"
           git init source
-          git -C source remote add origin git@github.com:cqh79zps52-tech/creatype-app.git
+          git -C source remote add origin git@github.com:cqh79zps52-tech/Creatype.git
           git -C source fetch --depth 1 origin "$SOURCE"
           git -C source checkout --detach FETCH_HEAD
           test "$(git -C source rev-parse HEAD)" = "$SOURCE"
-          cd source
+          cd source/apps/ios
           node -e 'const c=require("./eas.json");if(c.build.testflight.channel!=="testflight"||c.build.testflight.credentialsSource!=="local")throw Error("Profil inattendu")'
           npx --yes eas-cli@26.0.0 whoami
       - name: Confirmer le dépôt privé du résultat
@@ -63,8 +63,13 @@ jobs:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       CI: '1'
       EAS_BUILD_PROFILE: testflight
+    # L'app iPhone vit dans apps/ios du monorepo Creatype depuis le 2026-11-15.
+    defaults:
+      run:
+        working-directory: apps/ios
     steps:
       - name: Sélectionner Xcode et lire le code privé
+        working-directory: .
         env:
           SOURCE: ${{ inputs.source }}
           SOURCE_KEY: ${{ secrets.CREATYPE_SSH_KEY }}
@@ -77,7 +82,7 @@ jobs:
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/source -o IdentitiesOnly=yes"
           git init .
-          git remote add origin git@github.com:cqh79zps52-tech/creatype-app.git
+          git remote add origin git@github.com:cqh79zps52-tech/Creatype.git
           git fetch --depth 1 origin "$SOURCE"
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$SOURCE"
