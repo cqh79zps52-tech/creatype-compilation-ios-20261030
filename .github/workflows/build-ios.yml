@@ -86,6 +86,13 @@ jobs:
           git fetch --depth 1 origin "$SOURCE"
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$SOURCE"
+          # EAS archives from the Git root; the monorepo root .easignore drops apps/ios, so root Git at the app.
+          rm -rf .git
+          cd apps/ios
+          git init -q
+          git add --all
+          git -c user.name=build -c user.email=build@localhost commit -q -m "source $SOURCE"
+          test -n "$(git ls-files package.json)"
       - uses: actions/setup-node@v4
         with:
           node-version: 24.19.0
